@@ -1,0 +1,11 @@
+{
+  "name": "playwright-shard-audit",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test tests/audit.test.mjs",
+    "test:native": "node tests/native-playwright.mjs"
+  },
+  "devDependencies": { "@playwright/test": "1.65.0" }
+}
