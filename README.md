@@ -33,6 +33,8 @@ In PowerShell set `$env:PLAYWRIGHT_SHARD_AUDIT_OUT` before invoking each capture
 
 In CI, capture the baseline without a shard and capture each shard using its real matrix selection flags. Upload each receipt with a unique artifact name, then pass the baseline and all downloaded shard receipts to `audit` in a downstream job. Use the same checkout, Playwright version, and intended test selection throughout. An empty shard is fine if it supplies a receipt and every baseline instance appears exactly once overall.
 
+The [working GitHub Actions example](.github/workflows/ci.yml) includes four independent receipt jobs and one audit job. To adapt it, copy `capture-matrix` and `audit-matrix`, replace the fixture config with your own configuration, and keep one distinct output filename for each shard. The audit job leaves artifacts in separate folders and names all three shard receipts explicitly. If you change the matrix size, update both the `--shard` values and the audit job's input list.
+
 | Exit | Result |
 | --- | --- |
 | 0 | Every declared shard supplied exactly one receipt, and every expected instance appeared exactly once. |

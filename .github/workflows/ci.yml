@@ -24,3 +24,91 @@ jobs:
       - run: node shard_audit.mjs demo --json
       - run: npm ci --ignore-scripts
       - run: npm run test:native
+  capture-matrix:
+    name: Capture ${{ matrix.receipt.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        receipt:
+          - { name: baseline, shard: "" }
+          - { name: shard-1, shard: "1/3" }
+          - { name: shard-2, shard: "2/3" }
+          - { name: shard-3, shard: "3/3" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - name: Collect the synthetic fixture
+        shell: bash
+        env:
+          PLAYWRIGHT_SHARD_AUDIT_OUT: receipts/${{ matrix.receipt.name }}.json
+          SHARD_SLOT: ${{ matrix.receipt.shard }}
+        run: |
+          mkdir -p receipts
+          shard_args=()
+          if [[ -n "$SHARD_SLOT" ]]; then shard_args+=("--shard=$SHARD_SLOT"); fi
+          node node_modules/@playwright/test/cli.js test --config=examples/playwright.config.cjs --list --no-deps --reporter=./shard_reporter.cjs "${shard_args[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: receipt-${{ matrix.receipt.name }}
+          path: receipts/${{ matrix.receipt.name }}.json
+          if-no-files-found: error
+          retention-days: 3
+  audit-matrix:
+    name: Audit receipts from separate jobs
+    needs: capture-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: receipt-*
+          path: downloaded
+          merge-multiple: false
+      - name: Verify all 16 synthetic assignments
+        shell: bash
+        run: |
+          node shard_audit.mjs audit downloaded/receipt-baseline/baseline.json \
+            downloaded/receipt-shard-1/shard-1.json downloaded/receipt-shard-2/shard-2.json \
+            downloaded/receipt-shard-3/shard-3.json --json > audit.json
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const audit = JSON.parse(readFileSync("audit.json", "utf8"));
+            assert.equal(audit.status, "pass");
+            assert.equal(audit.expectedTests, 16);
+            assert.equal(audit.observedAssignments, 16);
+            assert.equal(audit.receivedReceipts, 3);
+            console.log("All 16 synthetic assignments were received through three shard artifacts.");
+          '
+      - name: Verify a repeated artifact fails
+        shell: bash
+        run: |
+          set +e
+          node shard_audit.mjs audit downloaded/receipt-baseline/baseline.json \
+            downloaded/receipt-shard-1/shard-1.json downloaded/receipt-shard-1/shard-1.json \
+            downloaded/receipt-shard-3/shard-3.json --json > repeated.json
+          result=$?
+          set -e
+          test "$result" -eq 1
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const audit = JSON.parse(readFileSync("repeated.json", "utf8"));
+            assert.deepEqual(audit.missingSlots, [2]);
+            assert.deepEqual(audit.repeatedSlots, [{ slot: 1, count: 2 }]);
+          '
